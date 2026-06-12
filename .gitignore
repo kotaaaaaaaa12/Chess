@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Next.js
+frontend/.next/
+frontend/out/
+
+# Env secrets (NEVER commit)
+.env
+.env.local
+.env*.local
+frontend/.env.local
+server/.env.local
+
+# Build / cache
+*.tsbuildinfo
+next-env.d.ts
+.DS_Store
+
+# Legacy data
+server/data/users.json
+
+# Logs
+npm-debug.log*
+*.log
