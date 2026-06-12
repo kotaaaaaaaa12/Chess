@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "dev:all": "node scripts/dev-all.mjs",
-    "start": "tsx src/index.ts",
+    "start": "node ./node_modules/tsx/dist/cli.mjs src/index.ts",
     "db:migrate": "node scripts/db-migrate.mjs",
     "db:import-legacy": "node scripts/import-json-users.mjs",
     "db:push": "drizzle-kit push",
@@ -21,6 +21,7 @@
     "express": "^4.21.2",
     "jose": "^6.2.3",
     "pg": "^8.21.0",
+    "tsx": "^4.22.4",
     "ws": "^8.21.0"
   },
   "devDependencies": {
@@ -31,7 +32,6 @@
     "@types/pg": "^8.20.0",
     "@types/ws": "^8.18.1",
     "drizzle-kit": "^0.31.10",
-    "tsx": "^4.22.4",
     "typescript": "^5.8.3"
   }
 }
