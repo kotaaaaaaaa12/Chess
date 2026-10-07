@@ -1,17 +1,11 @@
 import type { NextConfig } from "next";
-
-const apiUrl = process.env.API_URL ?? "http://localhost:4000";
+import path from "node:path";
 
 const nextConfig: NextConfig = {
+  output: "export",
+  outputFileTracingRoot: path.resolve(__dirname, ".."),
   reactStrictMode: true,
-  async rewrites() {
-    return [
-      {
-        source: "/api/:path*",
-        destination: `${apiUrl}/api/:path*`,
-      },
-    ];
-  },
+  images: { unoptimized: true },
 };
 
 export default nextConfig;

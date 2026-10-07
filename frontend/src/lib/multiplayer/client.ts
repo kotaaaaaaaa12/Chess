@@ -1,22 +1,29 @@
 import type { DrawReason } from "@/lib/chess/draw";
 import type { WinReason } from "@/lib/chess/gameEnd";
-import type { PieceColor, PieceRank } from "@/lib/chess/types";
+import type { MoveRecord, PieceColor, PieceRank } from "@/lib/chess/types";
 import type { TimeControl } from "@/lib/settings/types";
 import type { ServerMessage } from "../../../../server/src/ws/types";
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:3001";
+function socketUrl(roomId: string, token: string): string {
+  const url = new URL(`/ws/${roomId}`, window.location.origin);
+  url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  url.searchParams.set("token", token);
+  return url.href;
+}
+
+export type GameStartData = {
+  roomId: string; color: PieceColor; timeControl: TimeControl; opponentName?: string;
+  history?: MoveRecord[][]; whiteTime?: number; blackTime?: number; clockStarted?: boolean;
+  result?: { winner?: PieceColor; drawReason?: DrawReason; winReason?: WinReason };
+};
 
 export type MultiplayerHandlers = {
   onConnected?: () => void;
   onRoomCreated?: (roomId: string, color: PieceColor) => void;
   onRoomJoined?: (roomId: string, color: PieceColor) => void;
   onOpponentJoined?: () => void;
-  onGameStart?: (data: {
-    roomId: string;
-    color: PieceColor;
-    timeControl: TimeControl;
-    opponentName?: string;
-  }) => void;
+  onGameStart?: (data: GameStartData) => void;
+  onOpponentReconnected?: () => void;
   onMove?: (data: { pieceName: string; position: number; promotionRank?: PieceRank }) => void;
   onGameOver?: (data: { winner?: PieceColor; drawReason?: DrawReason; winReason?: WinReason }) => void;
   onOpponentDisconnected?: () => void;
@@ -30,33 +37,42 @@ export class MultiplayerClient {
   private handlers: MultiplayerHandlers = {};
   private roomId: string | null = null;
 
-  connect(token: string, handlers: MultiplayerHandlers): Promise<void> {
+  private token = "";
+  private intentionalClose = false;
+  private reconnectAttempts = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+  async connect(token: string, handlers: MultiplayerHandlers): Promise<void> {
+    this.token = token;
     this.handlers = handlers;
+    this.intentionalClose = false;
+  }
+
+  private openRoom(roomId: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      if (this.ws?.readyState === WebSocket.OPEN) {
-        this.handlers = handlers;
-        resolve();
-        return;
-      }
-
-      const url = `${WS_URL}?token=${encodeURIComponent(token)}`;
-      const ws = new WebSocket(url);
+      const ws = new WebSocket(socketUrl(roomId, this.token));
       this.ws = ws;
-
-      ws.onopen = () => resolve();
-      ws.onerror = () => reject(new Error("Could not connect to server"));
-      ws.onclose = () => {
-        if (this.roomId) {
-          this.handlers.onError?.("Disconnected from server");
-        }
+      let opened = false;
+      ws.onopen = () => { opened = true; resolve(); };
+      ws.onerror = () => { if (!opened) reject(new Error("Could not connect to the game server")); };
+      ws.onclose = (event) => {
+        if (this.ws !== ws || this.intentionalClose) return;
+        if (!opened) reject(new Error("Could not connect to the game server"));
+        if (this.roomId && event.code !== 1000 && event.code !== 1008 && this.reconnectAttempts < 5) {
+          this.handlers.onError?.("Connection lost. Reconnecting…");
+          const delay = Math.min(1000 * 2 ** this.reconnectAttempts++, 10000);
+          this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null;
+            void this.openRoom(roomId).catch(() => {});
+          }, delay);
+        } else if (this.roomId && event.code !== 1008) this.handlers.onError?.("Disconnected from the game server");
       };
       ws.onmessage = (ev) => {
         try {
           const msg = JSON.parse(String(ev.data)) as ServerMessage;
+          if (msg.type === "connected") this.reconnectAttempts = 0;
           this.dispatch(msg);
-        } catch {
-          this.handlers.onError?.("Invalid server message");
-        }
+        } catch { this.handlers.onError?.("Invalid server message"); }
       };
     });
   }
@@ -85,12 +101,7 @@ export class MultiplayerClient {
         break;
       case "game_start":
         this.roomId = msg.roomId;
-        this.handlers.onGameStart?.({
-          roomId: msg.roomId,
-          color: msg.color,
-          timeControl: msg.timeControl,
-          opponentName: msg.opponentName,
-        });
+        this.handlers.onGameStart?.(msg as GameStartData);
         break;
       case "move":
         this.handlers.onMove?.({
@@ -109,6 +120,9 @@ export class MultiplayerClient {
       case "opponent_disconnected":
         this.handlers.onOpponentDisconnected?.();
         break;
+      case "opponent_reconnected":
+        this.handlers.onOpponentReconnected?.();
+        break;
       case "draw_offered":
         this.handlers.onDrawOffered?.();
         break;
@@ -123,12 +137,27 @@ export class MultiplayerClient {
     }
   }
 
-  createRoom(timeControl: TimeControl, playerName?: string) {
-    this.send({ type: "create_room", timeControl, playerName });
+  async createRoom(timeControl: TimeControl, _playerName?: string) {
+    try {
+      const response = await fetch("/api/rooms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.token}` },
+        body: JSON.stringify({ timeControl }),
+      });
+      const data = await response.json() as { roomId?: string; error?: string };
+      if (!response.ok || !data.roomId) throw new Error(data.error || "Could not create a room");
+      this.roomId = data.roomId;
+      await this.openRoom(data.roomId);
+    } catch (error) { this.handlers.onError?.(error instanceof Error ? error.message : "Could not create a room"); }
   }
 
-  joinRoom(roomId: string, playerName?: string) {
-    this.send({ type: "join_room", roomId: roomId.toUpperCase(), playerName });
+  async joinRoom(roomId: string, _playerName?: string) {
+    const code = roomId.trim().toUpperCase();
+    if (!/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/.test(code)) {
+      this.handlers.onError?.("Enter a valid six-character room code"); return;
+    }
+    try { this.roomId = code; await this.openRoom(code); }
+    catch { this.handlers.onError?.("Could not connect to the game server"); }
   }
 
   sendMove(pieceName: string, position: number, promotionRank?: PieceRank) {
@@ -157,6 +186,9 @@ export class MultiplayerClient {
   }
 
   disconnect() {
+    this.intentionalClose = true;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
     this.ws?.close();
     this.ws = null;
     this.roomId = null;

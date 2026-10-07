@@ -5,7 +5,7 @@ export class History {
   private _history: MoveRecord[][] = [];
 
   add(step: MoveRecord): void {
-    this._lastStep.push(step);
+    this._lastStep.push({ ...step, piece: { ...step.piece } });
   }
 
   save(): void {

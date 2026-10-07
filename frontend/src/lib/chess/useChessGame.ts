@@ -468,6 +468,10 @@ export function useChessGame(
       const whiteTime = msToDisplaySeconds(whiteMs);
       const blackTime = msToDisplaySeconds(blackMs);
 
+      if ((whiteMs <= 0 || blackMs <= 0) && optionsRef.current?.playAgainst === "online") {
+        setClockSnapshot({ whiteTime, blackTime, turn: turnNow });
+        return;
+      }
       if (whiteMs <= 0 || blackMs <= 0) {
         gameClockMs.white = whiteMs;
         gameClockMs.black = blackMs;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { MultiplayerClient } from "@/lib/multiplayer/client";
+import { MultiplayerClient, type GameStartData } from "@/lib/multiplayer/client";
 import type { DrawReason } from "@/lib/chess/draw";
 import type { WinReason } from "@/lib/chess/gameEnd";
 import type { PieceColor, PieceRank } from "@/lib/chess/types";
@@ -30,12 +30,7 @@ export function useOnlineMultiplayer() {
   const [error, setError] = useState<string | null>(null);
   const [drawOffered, setDrawOffered] = useState(false);
   const [opponentDisconnected, setOpponentDisconnected] = useState(false);
-  const [pendingGameStart, setPendingGameStart] = useState<{
-    roomId: string;
-    color: PieceColor;
-    timeControl: TimeControl;
-    opponentName?: string;
-  } | null>(null);
+  const [pendingGameStart, setPendingGameStart] = useState<GameStartData | null>(null);
 
   const ensureClient = useCallback(() => {
     if (!clientRef.current) clientRef.current = new MultiplayerClient();
@@ -59,6 +54,7 @@ export function useOnlineMultiplayer() {
         },
         onOpponentJoined: () => setOpponentDisconnected(false),
         onGameStart: (data) => {
+          setError(null);
           setPendingGameStart(data);
           setColor(data.color);
           setRoomId(data.roomId);
@@ -69,11 +65,10 @@ export function useOnlineMultiplayer() {
         onMove: (move) => moveHandlerRef.current?.(move),
         onGameOver: (data) => gameOverHandlerRef.current?.(data),
         onOpponentDisconnected: () => setOpponentDisconnected(true),
+        onOpponentReconnected: () => setOpponentDisconnected(false),
         onDrawOffered: () => setDrawOffered(true),
         onDrawDeclined: () => setDrawOffered(false),
         onError: (msg) => {
-          // Ignore noisy errors during active play (e.g. duplicate move echo)
-          if (msg === "Not your turn" || msg === "Illegal move") return;
           if (msg.includes("Authentication required")) {
             setError("Session expired. Please login again.");
             return;
@@ -83,19 +78,19 @@ export function useOnlineMultiplayer() {
       });
     } catch {
       setStatus("idle");
-      setError("Server not reachable. Run: npm run server");
+      setError("Could not connect to the game server. Please try again.");
       throw new Error("connect failed");
     }
   }, [ensureClient]);
 
   const createRoom = useCallback(async (timeControl: TimeControl, token: string) => {
     await connect(token);
-    ensureClient().createRoom(timeControl);
+    await ensureClient().createRoom(timeControl);
   }, [connect, ensureClient]);
 
   const joinRoom = useCallback(async (code: string, token: string) => {
     await connect(token);
-    ensureClient().joinRoom(code);
+    await ensureClient().joinRoom(code);
   }, [connect, ensureClient]);
 
   const sendMove = useCallback(

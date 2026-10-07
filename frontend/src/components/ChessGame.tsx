@@ -9,6 +9,7 @@ import AuthScreen from "./AuthScreen";
 import { useAuth } from "@/context/AuthContext";
 import { useOnlineMultiplayer } from "@/hooks/useOnlineMultiplayer";
 import type { SavedGame } from "@/lib/storage";
+import type { GameStartData } from "@/lib/multiplayer/client";
 import ChessBoard from "./ChessBoard";
 import StartScreen from "./StartScreen";
 import GameSidebar from "./GameSidebar";
@@ -121,12 +122,7 @@ export default function ChessGame() {
     setScreen("online");
   };
 
-  const startOnlineGame = useCallback((data: {
-    roomId: string;
-    color: "white" | "black";
-    timeControl: TimeControl;
-    opponentName?: string;
-  }) => {
+  const startOnlineGame = useCallback((data: GameStartData) => {
     const myColor = data.color;
     const opts: GameOptions = {
       playAgainst: "online",
@@ -140,10 +136,17 @@ export default function ChessGame() {
     };
     setOptions(opts);
     setScreen("game");
-    initGame(opts);
+    if (data.history?.length) {
+      resumeGame({
+        history: data.history, options: opts, whiteTime: data.whiteTime ?? data.timeControl,
+        blackTime: data.blackTime ?? data.timeControl, moveCount: data.history.length,
+        hintsUsed: 0, clockStarted: data.clockStarted ?? false, flipped: myColor === "black", savedAt: Date.now(),
+      });
+    } else initGame(opts);
+    if (data.result) applyOnlineGameOver(data.result);
     if (data.opponentName) setOpponentName(data.opponentName);
     setOnlineMoveSender((move) => online.sendMove(move.pieceName, move.position, move.promotionRank));
-  }, [initGame, online, setOnlineMoveSender, setOpponentName]);
+  }, [initGame, resumeGame, applyOnlineGameOver, online, setOnlineMoveSender, setOpponentName]);
 
   const applyRemoteMoveRef = useRef(applyRemoteMove);
   const applyOnlineGameOverRef = useRef(applyOnlineGameOver);
@@ -165,7 +168,7 @@ export default function ChessGame() {
 
   useEffect(() => {
     const data = online.pendingGameStart;
-    if (!data || screen === "game") return;
+    if (!data) return;
     startOnlineGame(data);
     online.consumeGameStart();
   }, [online.pendingGameStart, screen, startOnlineGame, online.consumeGameStart]);

@@ -39,7 +39,7 @@ export class Game {
   }
 
   protected getEnPassantCapturedPos(landingSquare: number, capturerColor: PieceColor): number {
-    return landingSquare + (capturerColor === "white" ? 10 : -10);
+    return landingSquare + (capturerColor === "white" ? -10 : 10);
   }
 
   protected getEnPassantMoves(piece: ChessPiece): number[] {
@@ -330,6 +330,7 @@ export class Game {
     const enPassantTarget = this.enPassantSquare;
     this.enPassantSquare = null;
 
+    const wasPawn = piece.rank === "pawn";
     const prevPosition = piece.position;
     const isEnPassant = piece.rank === "pawn" && position === enPassantTarget;
     let existedPiece = this.getPieceByPos(position);
@@ -365,7 +366,7 @@ export class Game {
       this.promote(piece, promotionRank ?? "queen");
     }
 
-    if (piece.rank === "pawn" || existedPiece || isEnPassant) this.halfMoveClock = 0;
+    if (wasPawn || existedPiece || isEnPassant) this.halfMoveClock = 0;
     else this.halfMoveClock++;
 
     if (piece.rank === "pawn" && Math.abs(position - prevPosition) === 20) {
@@ -427,7 +428,7 @@ export class Game {
   }
 
   promote(pawn: ChessPiece, rank: PieceRank = "queen"): void {
-    pawn.name = pawn.name.replace("Pawn", rank.charAt(0).toUpperCase() + rank.slice(1));
+    pawn.name = pawn.name.replace("Pawn", rank.charAt(0).toUpperCase() + rank.slice(1) + "Promoted");
     pawn.rank = rank;
     this.addToHistory({ from: 0, to: pawn.position, piece: pawn });
     this.triggerEvent("promotion", pawn);
@@ -451,16 +452,17 @@ export class Game {
   }
 
   king_dead(color: PieceColor): boolean {
-    for (const piece of this.getPiecesByColor(color)) {
-      this.setClickedPiece(piece);
-      const moves = this.unblockedPositions(piece, getAllowedMoves(piece), true);
-      if (moves.length) {
-        this.setClickedPiece(null);
-        return false;
+    const previousTurn = this.turn;
+    this.turn = color;
+    try {
+      for (const piece of this.getPiecesByColor(color)) {
+        if (this.getPieceAllowedMoves(piece.name).length) return false;
       }
+      return true;
+    } finally {
+      this.turn = previousTurn;
+      this.setClickedPiece(null);
     }
-    this.setClickedPiece(null);
-    return true;
   }
 
   king_checked(color: PieceColor): boolean {

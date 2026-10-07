@@ -134,8 +134,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const clearAuthError = useCallback(() => setAuthError(null), []);
 
-  const loginWithGoogle = useCallback(() => {
-    window.location.href = "/api/auth/google";
+  const loginWithGoogle = useCallback(async () => {
+    try {
+      const response = await fetch("/api/auth/providers");
+      const providers = await response.json() as { google?: boolean };
+      if (!response.ok || !providers.google) {
+        setAuthError("Google sign-in is unavailable. Use your username and password.");
+        return;
+      }
+      window.location.href = "/api/auth/google";
+    } catch {
+      setAuthError("Could not connect to the sign-in service. Please try again.");
+    }
   }, []);
 
   useEffect(() => {

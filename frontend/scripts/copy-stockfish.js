@@ -21,3 +21,8 @@ fs.copyFileSync(
   path.join(src, "stockfish-18-lite-single.wasm"),
   path.join(dest, "stockfish.wasm")
 );
+
+fs.copyFileSync(
+  path.join(src, "../Copying.txt"),
+  path.join(dest, "COPYING.txt")
+);

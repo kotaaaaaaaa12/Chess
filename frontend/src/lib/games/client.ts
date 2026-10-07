@@ -21,7 +21,7 @@ export async function saveGameToCloud(input: SaveGameInput): Promise<GameSummary
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify(input),
+      body: JSON.stringify({ ...input, clientGameId: crypto.randomUUID() }),
     });
     if (!res.ok) return null;
     const data = (await res.json()) as { game: GameSummary; stats?: UserStats };
