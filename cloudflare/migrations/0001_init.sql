@@ -1,4 +1,4 @@
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   username TEXT NOT NULL UNIQUE,
   display_name TEXT NOT NULL,
@@ -12,11 +12,11 @@ CREATE TABLE users (
   games_played INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
-CREATE TABLE oauth_accounts (
+CREATE TABLE IF NOT EXISTS oauth_accounts (
   provider_account_id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
 );
-CREATE TABLE games (
+CREATE TABLE IF NOT EXISTS games (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   played_at TEXT NOT NULL,
@@ -24,4 +24,4 @@ CREATE TABLE games (
   history TEXT NOT NULL CHECK (json_valid(history)),
   pgn TEXT NOT NULL DEFAULT ''
 );
-CREATE INDEX games_user_played ON games(user_id, played_at DESC);
+CREATE INDEX IF NOT EXISTS games_user_played ON games(user_id, played_at DESC);

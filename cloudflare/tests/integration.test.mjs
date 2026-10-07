@@ -34,6 +34,13 @@ function socket(room, token) {
 }
 
 test('D1 accounts, private game history, atomic statistics, and WebSocket rooms', async t => {
+  // Make concurrent first requests safe even when deployment has not run CLI migrations.
+  const [a, b] = await Promise.all([
+    api('/api/auth/register', { body: { username: `white_${suffix}`, password: 'test-password', displayName: 'White Player' } }),
+    api('/api/auth/register', { body: { username: `black_${suffix}`, password: 'test-password', displayName: 'Black Player' } }),
+  ]);
+  assert.equal(a.status, 200); assert.equal(a.data.user.stats.elo, 1200);
+  assert.equal(b.status, 200);
   assert.equal((await api('/api/health')).data.ok, true);
   assert.equal((await api('/api/auth/providers')).data.google, false);
   const home = await fetch(base);
@@ -43,10 +50,6 @@ test('D1 accounts, private game history, atomic statistics, and WebSocket rooms'
   assert.equal(wasm.status, 200);
   const wasmBytes = new Uint8Array(await wasm.arrayBuffer());
   assert.deepEqual([...wasmBytes.slice(0, 4)], [0, 97, 115, 109]);
-  const a = await api('/api/auth/register', { body: { username: `white_${suffix}`, password: 'test-password', displayName: 'White Player' } });
-  assert.equal(a.status, 200); assert.equal(a.data.user.stats.elo, 1200);
-  const b = await api('/api/auth/register', { body: { username: `black_${suffix}`, password: 'test-password', displayName: 'Black Player' } });
-  assert.equal(b.status, 200);
   const tokenA = a.data.token, tokenB = b.data.token;
   assert.equal((await api('/api/auth/login', { body: { username: `white_${suffix}`, password: 'wrong' } })).status, 401);
   assert.equal((await api('/api/auth/login', { body: { username: `white_${suffix}`, password: 'test-password' } })).status, 200);

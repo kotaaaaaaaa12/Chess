@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { auth, requestUser, verifyToken } from './auth';
 import { games } from './games';
+import { ensureDatabase } from './database';
 import { getUser, type Env } from './types';
 export { ChessRoom } from './room';
 
@@ -12,6 +13,7 @@ app.use('/api/*', async (c, next) => {
     const origin = c.req.header('Origin');
     if (origin && origin !== new URL(c.req.url).origin) return c.json({ error: 'Invalid origin' }, 403);
   }
+  await ensureDatabase(c.env.DB);
   await next();
   c.header('Cache-Control', 'no-store');
   c.header('Referrer-Policy', 'no-referrer');
@@ -39,6 +41,7 @@ app.get('/ws/:roomId', async c => {
   if (c.req.header('Origin') && c.req.header('Origin') !== new URL(c.req.url).origin) return c.json({ error: 'Invalid origin' }, 403);
   const roomId = c.req.param('roomId').toUpperCase();
   if (!/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/.test(roomId)) return c.json({ error: 'Invalid room code' }, 400);
+  await ensureDatabase(c.env.DB);
   const id = await verifyToken(c.env, c.req.query('token') ?? '');
   const user = id ? await getUser(c.env, id) : null;
   if (!user) return c.json({ error: 'Authentication required' }, 401);
