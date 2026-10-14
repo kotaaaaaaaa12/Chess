@@ -1,241 +1,129 @@
 "use client";
-
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { AuthUser } from "@/lib/auth/types";
 import type { UserStats } from "@/lib/stats/types";
 import { mergeCloudStatsIntoLocal } from "@/lib/storage";
 import { notifyStatsUpdated } from "@/lib/stats/events";
-
 const TOKEN_KEY = "chess_auth_token";
-
+export type AuthResult = { token?: string; user?: AuthUser; error?: string; message?: string };
+export type ProfileInput = { username: string; displayName: string };
 interface AuthContextValue {
-  user: AuthUser | null;
-  token: string | null;
-  loading: boolean;
-  authError: string | null;
+  user: AuthUser | null; token: string | null; loading: boolean; authError: string | null;
   clearAuthError: () => void;
-  login: (username: string, password: string) => Promise<string | null>;
-  register: (
-    username: string,
-    password: string,
-    displayName?: string,
-    email?: string
-  ) => Promise<string | null>;
-  loginWithGoogle: () => void;
+  login: (username: string, password: string) => Promise<AuthResult>;
+  register: (username: string, password: string, displayName?: string) => Promise<AuthResult>;
   logout: () => void;
+  refreshUser: () => Promise<void>;
   updateUserStats: (stats: UserStats) => void;
-  updateProfile: (input: {
-    username: string;
-    displayName: string;
-  }) => Promise<string | null>;
+  updateProfile: (input: ProfileInput) => Promise<string | null>;
+  changePassword: (currentPassword: string, password: string) => Promise<string | null>;
 }
-
 const AuthContext = createContext<AuthContextValue | null>(null);
-
-async function authRequest(
-  path: "/api/auth/login" | "/api/auth/register",
-  body: Record<string, string>
-): Promise<{ token: string; user: AuthUser } | { error: string }> {
-  const res = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = (await res.json()) as { token?: string; user?: AuthUser; error?: string };
-  if (!res.ok || !data.token || !data.user) {
-    return { error: data.error ?? "Request failed" };
-  }
-  return { token: data.token, user: data.user };
+export async function accountRequest(path: string, body: Record<string, unknown>, token?: string): Promise<AuthResult> {
+  try {
+    const res = await fetch(`/api/auth/${path}`, { method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) });
+    const data = await res.json() as AuthResult;
+    return res.ok ? data : { ...data, error: data.error ?? "The request could not be completed." };
+  } catch { return { error: "Could not connect. Please try again." }; }
 }
-
-async function fetchMe(token: string): Promise<AuthUser | null> {
-  const res = await fetch("/api/auth/me", {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) return null;
-  const data = (await res.json()) as { user: AuthUser };
-  if (data.user?.stats) {
-    mergeCloudStatsIntoLocal(data.user.stats);
-    notifyStatsUpdated();
-  }
-  return data.user;
-}
-
+let googleExchange: Promise<AuthResult> | undefined;
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
-
   const persistSession = useCallback((nextToken: string, nextUser: AuthUser) => {
-    localStorage.setItem(TOKEN_KEY, nextToken);
-    if (nextUser.stats) {
-      mergeCloudStatsIntoLocal(nextUser.stats);
-      notifyStatsUpdated();
-    }
-    setToken(nextToken);
-    setUser(nextUser);
+    localStorage.setItem(TOKEN_KEY, nextToken); setToken(nextToken); setUser(nextUser);
+    mergeCloudStatsIntoLocal(nextUser.stats); notifyStatsUpdated();
   }, []);
-
-  const logout = useCallback(() => {
-    localStorage.removeItem(TOKEN_KEY);
-    setToken(null);
-    setUser(null);
-  }, []);
-
+  const clearSession = useCallback(() => { localStorage.removeItem(TOKEN_KEY); setToken(null); setUser(null); }, []);
+  const refreshUser = useCallback(async () => {
+    const active = token ?? localStorage.getItem(TOKEN_KEY);
+    if (!active) return;
+    const res = await fetch("/api/auth/me", { headers: { Authorization: `Bearer ${active}` } });
+    if (res.status === 401) { clearSession(); return; }
+    if (!res.ok) throw new Error("Could not refresh your account.");
+    const data = await res.json() as { user: AuthUser }; persistSession(active, data.user);
+  }, [token, clearSession, persistSession]);
+  const logout = useCallback(async () => {
+    const active = token ?? localStorage.getItem(TOKEN_KEY);
+    const result = await accountRequest("logout", {}, active ?? undefined);
+    clearSession();
+    if (result.error) setAuthError("Signed out on this device. The server could not confirm session revocation.");
+  }, [token, clearSession]);
   const updateUserStats = useCallback((stats: UserStats) => {
-    setUser((prev) => (prev ? { ...prev, stats } : prev));
-    mergeCloudStatsIntoLocal(stats);
-    notifyStatsUpdated();
+    setUser(prev => prev ? { ...prev, stats } : prev); mergeCloudStatsIntoLocal(stats); notifyStatsUpdated();
   }, []);
-
-  const updateProfile = useCallback(
-    async (input: { username: string; displayName: string }) => {
-      const activeToken = token ?? localStorage.getItem(TOKEN_KEY);
-      if (!activeToken) return "Not authenticated";
-
-      try {
-        const res = await fetch("/api/auth/profile", {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${activeToken}`,
-          },
-          body: JSON.stringify(input),
-        });
-        const data = (await res.json()) as {
-          user?: AuthUser;
-          token?: string;
-          error?: string;
-        };
-        if (!res.ok || !data.user) {
-          return data.error ?? "Failed to update profile";
-        }
-        if (data.token) {
-          persistSession(data.token, data.user);
-        } else {
-          setUser(data.user);
-        }
-        return null;
-      } catch {
-        return "Network error — try again";
-      }
-    },
-    [token, persistSession]
-  );
-
-  const clearAuthError = useCallback(() => setAuthError(null), []);
-
-  const loginWithGoogle = useCallback(async () => {
+  const updateProfile = useCallback(async (input: ProfileInput) => {
+    const active = token ?? localStorage.getItem(TOKEN_KEY);
+    if (!active) return "Not authenticated";
     try {
-      const response = await fetch("/api/auth/providers");
-      const providers = await response.json() as { google?: boolean };
-      if (!response.ok || !providers.google) {
-        setAuthError("Google sign-in is unavailable. Use your username and password.");
-        return;
-      }
-      window.location.href = "/api/auth/google";
-    } catch {
-      setAuthError("Could not connect to the sign-in service. Please try again.");
-    }
-  }, []);
-
+      const res = await fetch("/api/auth/profile", { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${active}` }, body: JSON.stringify(input) });
+      const data = await res.json() as AuthResult;
+      if (!res.ok || !data.user || !data.token) return data.error ?? "Could not save your profile.";
+      persistSession(data.token, data.user); return null;
+    } catch { return "Could not connect. Please try again."; }
+  }, [token, persistSession]);
+  const changePassword = useCallback(async (currentPassword: string, password: string) => {
+    const active = token ?? localStorage.getItem(TOKEN_KEY);
+    if (!active) return "Not authenticated";
+    const result = await accountRequest("change-password", { currentPassword, password }, active);
+    if (result.error) return result.error;
+    if (!result.token || !result.user) return "Could not update your password.";
+    persistSession(result.token, result.user); return null;
+  }, [token, persistSession]);
+  const clearAuthError = useCallback(() => setAuthError(null), []);
   useEffect(() => {
+    let alive = true;
     const bootstrap = async () => {
-      const params = new URLSearchParams(window.location.search);
-      const oauthToken = params.get("auth_token");
-      const oauthError = params.get("auth_error");
-
-      if (oauthError) {
-        setAuthError(decodeURIComponent(oauthError));
-        params.delete("auth_error");
-        const next = `${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
-        window.history.replaceState({}, "", next);
-      }
-
-      let activeToken = oauthToken || localStorage.getItem(TOKEN_KEY);
-
-      if (oauthToken) {
-        localStorage.setItem(TOKEN_KEY, oauthToken);
-        setToken(oauthToken);
-        params.delete("auth_token");
-        const next = `${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
-        window.history.replaceState({}, "", next);
-      }
-
-      if (!activeToken) {
-        setLoading(false);
-        return;
-      }
-
-      const me = await fetchMe(activeToken);
-      if (!me) {
-        localStorage.removeItem(TOKEN_KEY);
-        setToken(null);
-        setUser(null);
-        setLoading(false);
-        return;
-      }
-
-      setToken(activeToken);
-      setUser(me);
-      setLoading(false);
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const fragment = new URLSearchParams(window.location.hash.slice(1));
+        const error = params.get("auth_error");
+        const legacy = params.get("auth_token");
+        if (error && alive) setAuthError(error);
+        params.delete("auth_error"); params.delete("auth_token");
+        const isGoogle = fragment.get("auth_action") === "google";
+        if (isGoogle && !googleExchange) {
+          googleExchange = accountRequest("exchange", { code: fragment.get("code") ?? "" });
+          void googleExchange.finally(() => { googleExchange = undefined; });
+        }
+        if (error || legacy || isGoogle) window.history.replaceState({}, "", `${window.location.pathname}${params.size ? `?${params}` : ""}${isGoogle ? "" : window.location.hash}`);
+        if (googleExchange) {
+          const result = await googleExchange;
+          if (!alive) return;
+          if (result.error || !result.token || !result.user) { setAuthError(result.error ?? "Google sign-in failed."); return; }
+          persistSession(result.token, result.user); return;
+        }
+        const active = legacy ?? localStorage.getItem(TOKEN_KEY);
+        if (!active) return;
+        const res = await fetch("/api/auth/me", { headers: { Authorization: `Bearer ${active}` } });
+        if (!alive) return;
+        if (res.status === 401) { clearSession(); return; }
+        if (!res.ok) { setAuthError("Could not restore your session. Please refresh and try again."); return; }
+        const data = await res.json() as { user: AuthUser };
+        if (alive) persistSession(active, data.user);
+      } catch { if (alive) setAuthError("Could not connect to your account. Please try again."); }
+      finally { if (alive) setLoading(false); }
     };
-
-    bootstrap();
-  }, []);
-
-  const login = useCallback(
-    async (username: string, password: string) => {
-      const result = await authRequest("/api/auth/login", { username, password });
-      if ("error" in result) return result.error;
-      persistSession(result.token, result.user);
-      return null;
-    },
-    [persistSession]
-  );
-
-  const register = useCallback(
-    async (username: string, password: string, displayName?: string, email?: string) => {
-      const body: Record<string, string> = { username, password };
-      if (displayName?.trim()) body.displayName = displayName.trim();
-      if (email?.trim()) body.email = email.trim();
-      const result = await authRequest("/api/auth/register", body);
-      if ("error" in result) return result.error;
-      persistSession(result.token, result.user);
-      return null;
-    },
-    [persistSession]
-  );
-
-  const value = useMemo(
-    () => ({
-      user,
-      token,
-      loading,
-      authError,
-      clearAuthError,
-      login,
-      register,
-      loginWithGoogle,
-      logout,
-      updateUserStats,
-      updateProfile,
-    }),
-    [user, token, loading, authError, clearAuthError, login, register, loginWithGoogle, logout, updateUserStats, updateProfile]
-  );
-
+    void bootstrap();
+    const storageChanged = (event: StorageEvent) => { if (event.key === TOKEN_KEY) window.location.reload(); };
+    window.addEventListener("storage", storageChanged);
+    return () => { alive = false; window.removeEventListener("storage", storageChanged); };
+  }, [persistSession, clearSession]);
+  const login = useCallback(async (username: string, password: string) => {
+    const result = await accountRequest("login", { username, password });
+    if (result.token && result.user) persistSession(result.token, result.user);
+    return result;
+  }, [persistSession]);
+  const register = useCallback(async (username: string, password: string, displayName?: string) => {
+    const result = await accountRequest("register", { username, password, displayName });
+    if (result.token && result.user) persistSession(result.token, result.user);
+    return result;
+  }, [persistSession]);
+  const value = useMemo(() => ({ user, token, loading, authError, clearAuthError, login, register, logout, refreshUser, updateUserStats, updateProfile, changePassword }), [user, token, loading, authError, clearAuthError, login, register, logout, refreshUser, updateUserStats, updateProfile, changePassword]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
-
 export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");

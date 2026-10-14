@@ -1,4 +1,5 @@
 import initialSchema from '../migrations/0001_init.sql';
+import authSchema from '../migrations/0002_auth.sql';
 
 const initialized = new WeakMap<D1Database, Promise<void>>();
 const migrationName = '0001_init.sql';
@@ -9,16 +10,18 @@ const ledgerSchema = `CREATE TABLE IF NOT EXISTS d1_migrations (
 )`;
 
 async function initialize(db: D1Database) {
-  const ledger = await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'd1_migrations'").first();
-  if (ledger && await db.prepare('SELECT name FROM d1_migrations WHERE name = ?').bind(migrationName).first()) return;
-
-  // This initial migration contains only simple statements, with no triggers or embedded semicolons.
-  const statements = initialSchema.split(';').map(sql => sql.trim()).filter(Boolean);
-  await db.batch([
-    db.prepare(ledgerSchema),
-    ...statements.map(sql => db.prepare(sql)),
-    db.prepare('INSERT OR IGNORE INTO d1_migrations (name) VALUES (?)').bind(migrationName),
-  ]);
+  const ledger = await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='d1_migrations'").first();
+  if (!ledger) await db.prepare(ledgerSchema).run();
+  const applied = await db.prepare('SELECT name FROM d1_migrations').all<{name:string}>();
+  const names = new Set(applied.results.map(row => row.name));
+  // Bundled migrations use only idempotent statements with no embedded semicolons.
+  for (const [name, schema] of [[migrationName, initialSchema], ['0002_auth.sql', authSchema]]) {
+    if (names.has(name)) continue;
+    await db.batch([
+      ...schema.split(';').map(sql => sql.trim()).filter(Boolean).map(sql => db.prepare(sql)),
+      db.prepare('INSERT OR IGNORE INTO d1_migrations (name) VALUES (?)').bind(name),
+    ]);
+  }
 }
 
 export async function ensureDatabase(db: D1Database) {

@@ -4,18 +4,25 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { X, Loader2, UserPen } from "lucide-react";
 import type { AuthUser } from "@/lib/auth/types";
+import { useAuth, type ProfileInput } from "@/context/AuthContext";
 import ModalPortal from "./ModalPortal";
 
 interface ProfileEditModalProps {
   open: boolean;
   user: AuthUser;
   onClose: () => void;
-  onSave: (input: { username: string; displayName: string }) => Promise<string | null>;
+  onSave: (input: ProfileInput) => Promise<string | null>;
 }
 
 export default function ProfileEditModal({
   open, user, onClose, onSave,
 }: ProfileEditModalProps) {
+  const { changePassword } = useAuth();
+  const [section, setSection] = useState<"profile" | "security">("profile");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [notice, setNotice] = useState<string | null>(null);
   const [username, setUsername] = useState(user.username);
   const [displayName, setDisplayName] = useState(user.displayName);
   const [error, setError] = useState<string | null>(null);
@@ -24,10 +31,12 @@ export default function ProfileEditModal({
   useEffect(() => {
     if (open) {
       setUsername(user.username);
+      setCurrentPassword("");
+      setNotice(null);
       setDisplayName(user.displayName);
       setError(null);
     }
-  }, [open, user.username, user.displayName]);
+  }, [open, user.id]);
 
   useEffect(() => {
     if (!open) return;
@@ -52,7 +61,8 @@ export default function ProfileEditModal({
         setError(err);
         return;
       }
-      onClose();
+      setNotice("Profile saved.");
+      setCurrentPassword("");
     } finally {
       setBusy(false);
     }
@@ -71,7 +81,7 @@ export default function ProfileEditModal({
           initial={{ scale: 0.94, y: 20, opacity: 0 }}
           animate={{ scale: 1, y: 0, opacity: 1 }}
           transition={{ type: "spring", stiffness: 380, damping: 28 }}
-          className="profile-edit-modal my-auto"
+          className="profile-edit-modal my-auto max-h-[90dvh] overflow-y-auto"
           onClick={(e) => e.stopPropagation()}
           role="dialog"
           aria-modal="true"
@@ -92,9 +102,10 @@ export default function ProfileEditModal({
             </button>
           </div>
 
-          <div className="profile-edit-modal__body">
+          <div className="online-tabs px-4"><button type="button" disabled={busy} className={`online-tab ${section === "profile" ? "online-tab--active" : ""}`} onClick={() => { setSection("profile"); setError(null); setNotice(null); }}>Profile</button><button type="button" disabled={busy} className={`online-tab ${section === "security" ? "online-tab--active" : ""}`} onClick={() => { setSection("security"); setError(null); setNotice(null); }}>Security</button></div>
+          {section === "profile" ? <div className="profile-edit-modal__body">
             <label className="profile-edit-field">
-              <span className="profile-edit-field__label">Username</span>
+              <span className="profile-edit-field__label">User ID</span>
               <div className="profile-edit-field__input-wrap">
                 <span className="profile-edit-field__prefix">@</span>
                 <input
@@ -124,16 +135,25 @@ export default function ProfileEditModal({
               <span className="profile-edit-field__hint">Shown on your profile and in games</span>
             </label>
 
-            {error && <p className="profile-edit-modal__error">{error}</p>}
-          </div>
+            {error && <p role="alert" className="profile-edit-modal__error">{error}</p>}
+            {notice && <p role="status" className="text-green-200 text-sm">{notice}</p>}
+          </div> : <div className="profile-edit-modal__body space-y-3">
+            <form className="space-y-3" onSubmit={async event => { event.preventDefault(); setError(null); setNotice(null); if (newPassword !== confirmPassword) { setError("Passwords do not match."); return; } setBusy(true); try { const result = await changePassword(currentPassword, newPassword); if (result) setError(result); else { setNotice("Password changed. Other sessions have been signed out."); setCurrentPassword(""); setNewPassword(""); setConfirmPassword(""); } } finally { setBusy(false); } }}>
+              {user.hasPassword && <label className="profile-edit-field"><span>Current password</span><input type="password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} autoComplete="current-password" required disabled={busy}/></label>}
+              <label className="profile-edit-field"><span>New password</span><input type="password" value={newPassword} onChange={event => setNewPassword(event.target.value)} autoComplete="new-password" minLength={8} maxLength={128} required disabled={busy}/></label>
+              <label className="profile-edit-field"><span>Confirm password</span><input type="password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} autoComplete="new-password" minLength={8} maxLength={128} required disabled={busy}/></label>
+              <button type="submit" className="btn-primary w-full py-3" disabled={busy}>{busy ? "Please wait…" : user.hasPassword ? "Change password" : "Set password"}</button>
+            </form>
+            {error && <p role="alert" className="profile-edit-modal__error">{error}</p>}{notice && <p role="status" className="text-green-200 text-sm">{notice}</p>}
+          </div>}
 
           <div className="profile-edit-modal__footer">
             <button type="button" onClick={onClose} className="btn-ghost flex-1 py-2.5" disabled={busy}>
               Cancel
             </button>
-            <button type="button" onClick={handleSubmit} className="btn-primary flex-1 py-2.5" disabled={busy}>
+            {section === "profile" && <button type="button" onClick={handleSubmit} className="btn-primary flex-1 py-2.5" disabled={busy}>
               {busy ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : "Save changes"}
-            </button>
+            </button>}
           </div>
         </motion.div>
       </motion.div>

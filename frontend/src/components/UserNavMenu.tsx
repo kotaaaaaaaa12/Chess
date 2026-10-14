@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ChevronDown, LogOut, User, Trophy, Mail, Pencil,
+  ChevronDown, LogOut, User, Trophy, Pencil,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import ProfileEditModal from "./ProfileEditModal";
@@ -132,13 +132,6 @@ export default function UserNavMenu() {
                 <p className="user-nav__menu-name">{user.displayName}</p>
                 <p className="user-nav__menu-handle">@{user.username}</p>
               </div>
-
-              {user.email && (
-                <div className="user-nav__menu-row">
-                  <Mail className="w-4 h-4 shrink-0 opacity-45" />
-                  <span className="truncate">{user.email}</span>
-                </div>
-              )}
 
               <div className="user-nav__stats">
                 <div className="user-nav__stat">

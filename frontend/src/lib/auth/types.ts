@@ -6,6 +6,8 @@ export interface AuthUser {
   displayName: string;
   email?: string | null;
   avatarUrl?: string | null;
+  emailVerified?: boolean;
+  hasPassword?: boolean;
   stats: UserStats;
 }
 

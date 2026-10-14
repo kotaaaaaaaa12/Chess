@@ -3,6 +3,7 @@ import { bodyLimit } from 'hono/body-limit';
 import { auth, requestUser, verifyToken } from './auth';
 import { games } from './games';
 import { ensureDatabase } from './database';
+import { cleanupAuth } from './auth-support';
 import { getUser, type Env } from './types';
 export { ChessRoom } from './room';
 
@@ -47,6 +48,7 @@ app.get('/ws/:roomId', async c => {
   if (!user) return c.json({ error: 'Authentication required' }, 401);
   const headers = new Headers(c.req.raw.headers);
   headers.set('X-Player-Id', user.id);
+  headers.set('X-Auth-Token', c.req.query('token') ?? '');
   headers.set('X-Player-Name', encodeURIComponent(user.display_name));
   const stub = c.env.ROOMS.get(c.env.ROOMS.idFromName(roomId), { locationHint: c.env.ROOM_LOCATION_HINT ?? 'apac' });
   return stub.fetch(new Request(c.req.url, { headers }));
@@ -57,4 +59,10 @@ app.onError((err, c) => {
   console.error('Request failed', err.message);
   return c.json({ error: 'The server could not complete the request. Please try again.' }, 500);
 });
-export default app;
+export default {
+  fetch: app.fetch,
+  async scheduled(_event: ScheduledController, env: Env) {
+    await ensureDatabase(env.DB);
+    await cleanupAuth(env);
+  },
+} satisfies ExportedHandler<Env>;

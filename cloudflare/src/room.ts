@@ -3,6 +3,7 @@ import { Game } from '../../frontend/src/lib/chess/game';
 import { INITIAL_PIECES, clonePieces } from '../../frontend/src/lib/chess/constants';
 import type { PieceColor, PieceRank } from '../../frontend/src/lib/chess/types';
 import type { Env } from './types';
+import { verifyToken } from './auth';
 
 type Move = { pieceName: string; position: number; promotionRank?: PieceRank };
 type Result = { type: 'game_over'; winner?: PieceColor; drawReason?: string; winReason?: string };
@@ -13,7 +14,7 @@ type Room = {
   remaining: Record<PieceColor, number>; lastMoveAt: number; expiresAt: number;
   drawOfferedBy?: PieceColor; result?: Result;
 };
-type Attachment = { userId: string; color: PieceColor };
+type Attachment = { userId: string; color: PieceColor; token?: string };
 const opposite = (c: PieceColor): PieceColor => c === 'white' ? 'black' : 'white';
 
 export class ChessRoom extends DurableObject<Env> {
@@ -100,7 +101,7 @@ export class ChessRoom extends DurableObject<Env> {
       }
       // The latest connection owns the seat; a closed older socket cannot remove it.
       for (const old of this.sockets(color)) old.close(1000, 'Connected from another tab');
-      ws.serializeAttachment({ userId, color } satisfies Attachment);
+      ws.serializeAttachment({ userId, color, token: request.headers.get('X-Auth-Token') ?? undefined } satisfies Attachment);
       await this.save();
       this.send(ws, { type: 'connected' });
       if (r.status === 'waiting') this.send(ws, { type: 'room_created', roomId: r.id, color });
@@ -120,10 +121,11 @@ export class ChessRoom extends DurableObject<Env> {
       let b: Record<string, unknown>;
       try { b = JSON.parse(message); } catch { this.send(ws, { type: 'error', message: 'Invalid message' }); return; }
       if (!b || typeof b !== 'object') return;
-      if (b.type === 'ping') { this.send(ws, { type: 'pong' }); return; }
       const a = ws.deserializeAttachment() as Attachment | null;
       const r = this.room;
       if (!a || !r || r.players[a.color]?.userId !== a.userId || !this.sockets(a.color).includes(ws)) return;
+      if (!a.token || await verifyToken(this.env,a.token) !== a.userId) { ws.close(1008,'Sign in again'); return; }
+      if (b.type === 'ping') { this.send(ws,{type:'pong'}); return; }
       if (b.roomId !== r.id || r.status !== 'active') { this.send(ws, { type: 'error', message: 'No active game' }); return; }
       const times = this.clock();
       if (r.timeControl && r.lastMoveAt && times[this.game.turn] <= 0) {
